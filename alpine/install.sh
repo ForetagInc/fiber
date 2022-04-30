@@ -40,4 +40,7 @@ rc-service wpa_supplicant start
 rc-service sddm start
 
 # Applications
-apk add firefox
+apk add firefox-esr
+
+# XR Applications
+apk add openvino opencv
