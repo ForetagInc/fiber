@@ -1,0 +1,8 @@
+[package]
+name = 'focus_mode'
+publish = false
+edition = '2024'
+version = '0.1.0'
+
+[dependencies]
+contacts = { path = '../contacts' }
