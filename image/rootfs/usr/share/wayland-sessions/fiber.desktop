@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Fiber
+Comment=Fiber Wayland/OpenXR compositor session
+Exec=/usr/bin/fiber-compositor --shell spatial --openxr auto
+Type=Application
+DesktopNames=Fiber

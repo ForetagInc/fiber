@@ -1,0 +1,64 @@
+name: Build ISOs
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-iso:
+    name: "${{ matrix.target }} ISO"
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64
+            runner: ubuntu-24.04
+            grub_package: grub-efi-amd64-bin
+            artifact_name: fiberos-x86_64-iso
+          - target: aarch64
+            runner: ubuntu-24.04-arm
+            grub_package: grub-efi-arm64-bin
+            artifact_name: fiberos-aarch64-iso
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            debootstrap \
+            dosfstools \
+            "${{ matrix.grub_package }}" \
+            libopenxr-loader-dev \
+            libwayland-dev \
+            mtools \
+            pkg-config \
+            rsync \
+            squashfs-tools \
+            xorriso
+
+      - name: Build release ISO
+        run: |
+          scripts/build-release \
+            --target "${{ matrix.target }}" \
+            --bootstrap-rootfs \
+            --with-aliases
+
+      - name: Upload ISO artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            dist/release/fiberos-*.iso
+            dist/release/SHA256SUMS
+          if-no-files-found: error
+          compression-level: 0

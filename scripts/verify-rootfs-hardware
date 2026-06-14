@@ -1,0 +1,217 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+FIBER_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+source "$FIBER_ROOT/scripts/lib/fiber-image.sh"
+
+usage() {
+	cat <<'USAGE'
+Usage: scripts/verify-rootfs-hardware --rootfs PATH [options]
+
+Verify that a Fiber rootfs contains the baseline hardware stack for GPU, CPU,
+sound, Wi-Fi, and Bluetooth.
+
+Options:
+  --rootfs PATH     Rootfs directory to inspect.
+  --target TARGET   x86_64/amd64 or aarch64/arm64. Auto-detected when possible.
+  --strict          Exit non-zero when support is missing.
+  -h, --help        Show this help.
+USAGE
+}
+
+rootfs=""
+target=""
+strict=false
+failures=0
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--rootfs)
+			[[ $# -ge 2 ]] || fiber_die "--rootfs requires a value"
+			rootfs="$2"
+			shift 2
+			;;
+		--target)
+			[[ $# -ge 2 ]] || fiber_die "--target requires a value"
+			target="$(fiber_normalize_target "$2")"
+			shift 2
+			;;
+		--strict)
+			strict=true
+			shift
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*)
+			fiber_die "unknown option '$1'"
+			;;
+	esac
+done
+
+[[ -n "$rootfs" ]] || fiber_die "--rootfs is required"
+[[ -d "$rootfs" ]] || fiber_die "rootfs does not exist: $rootfs"
+
+if [[ -z "$target" && -f "$rootfs/etc/fiberos/build-info" ]]; then
+	target="$(awk -F= '/^FIBER_TARGET=/{print $2}' "$rootfs/etc/fiberos/build-info" | tail -n 1 || true)"
+fi
+
+target="${target:-$(fiber_host_target)}"
+target="$(fiber_normalize_target "$target")"
+
+note() {
+	printf 'hardware-check: %s\n' "$*" >&2
+}
+
+missing() {
+	failures=$((failures + 1))
+	note "missing: $*"
+}
+
+find_any() {
+	local root="$1"
+	shift
+	[[ -d "$root" ]] || return 1
+	find "$root" "$@" -print -quit 2>/dev/null | grep -q .
+}
+
+has_file_name() {
+	local dir="$1"
+	local pattern="$2"
+	find_any "$dir" -name "$pattern"
+}
+
+has_binary() {
+	local name="$1"
+	[[ -x "$rootfs/usr/bin/$name" || -x "$rootfs/usr/sbin/$name" || -x "$rootfs/bin/$name" || -x "$rootfs/sbin/$name" ]]
+}
+
+has_unit() {
+	local unit="$1"
+	[[ -f "$rootfs/usr/lib/systemd/system/$unit" || -f "$rootfs/lib/systemd/system/$unit" || -f "$rootfs/etc/systemd/system/$unit" ]]
+}
+
+has_user_unit() {
+	local unit="$1"
+	[[ -f "$rootfs/usr/lib/systemd/user/$unit" || -f "$rootfs/lib/systemd/user/$unit" || -f "$rootfs/etc/systemd/user/$unit" ]]
+}
+
+modules_root=""
+for candidate in "$rootfs/lib/modules" "$rootfs/usr/lib/modules"; do
+	if [[ -d "$candidate" ]]; then
+		modules_root="$candidate"
+		break
+	fi
+done
+
+firmware_root=""
+for candidate in "$rootfs/lib/firmware" "$rootfs/usr/lib/firmware"; do
+	if [[ -d "$candidate" ]]; then
+		firmware_root="$candidate"
+		break
+	fi
+done
+
+[[ -n "$modules_root" ]] || missing "kernel modules under /lib/modules or /usr/lib/modules"
+[[ -n "$firmware_root" ]] || missing "linux-firmware under /lib/firmware or /usr/lib/firmware"
+
+if [[ -n "$modules_root" ]]; then
+	case "$target" in
+		x86_64)
+			has_file_name "$modules_root" "i915.ko*" || \
+				has_file_name "$modules_root" "xe.ko*" || \
+				has_file_name "$modules_root" "amdgpu.ko*" || \
+				has_file_name "$modules_root" "nouveau.ko*" || \
+				missing "x86 GPU DRM modules such as i915, xe, amdgpu, or nouveau"
+			;;
+		aarch64)
+			has_file_name "$modules_root" "panfrost.ko*" || \
+				has_file_name "$modules_root" "lima.ko*" || \
+				has_file_name "$modules_root" "v3d.ko*" || \
+				has_file_name "$modules_root" "vc4.ko*" || \
+				has_file_name "$modules_root" "msm.ko*" || \
+				has_file_name "$modules_root" "etnaviv.ko*" || \
+				has_file_name "$modules_root" "asahi.ko*" || \
+				note "warning: no common arm64 GPU DRM module detected"
+			;;
+	esac
+
+	has_file_name "$modules_root" "snd-hda-intel.ko*" || \
+		has_file_name "$modules_root" "snd-sof*.ko*" || \
+		has_file_name "$modules_root" "snd-soc-*.ko*" || \
+		has_file_name "$modules_root" "snd_usb_audio.ko*" || \
+		missing "sound kernel modules such as snd-hda-intel, SOF, or USB audio"
+
+	has_file_name "$modules_root" "iwlwifi.ko*" || \
+		has_file_name "$modules_root" "ath*.ko*" || \
+		has_file_name "$modules_root" "brcmfmac.ko*" || \
+		has_file_name "$modules_root" "rtw*.ko*" || \
+		has_file_name "$modules_root" "mt76*.ko*" || \
+		missing "Wi-Fi kernel modules such as iwlwifi, ath, brcmfmac, rtw, or mt76"
+
+	has_file_name "$modules_root" "btusb.ko*" || \
+		has_file_name "$modules_root" "btintel.ko*" || \
+		has_file_name "$modules_root" "btbcm.ko*" || \
+		missing "Bluetooth kernel modules such as btusb, btintel, or btbcm"
+
+	case "$target" in
+		x86_64)
+			has_file_name "$modules_root" "intel_pstate.ko*" || \
+				has_file_name "$modules_root" "amd_pstate.ko*" || \
+				has_file_name "$modules_root" "acpi_cpufreq.ko*" || \
+				note "warning: x86 CPU frequency driver modules not found; they may be built into the kernel"
+			;;
+		aarch64)
+			has_file_name "$modules_root" "scmi-cpufreq.ko*" || \
+				has_file_name "$modules_root" "cpufreq-dt.ko*" || \
+				note "warning: arm64 CPU frequency driver modules not found; they may be built into the kernel"
+			;;
+	esac
+fi
+
+if [[ -n "$firmware_root" ]]; then
+	case "$target" in
+		x86_64)
+			find_any "$firmware_root" -path "*i915*" -o -path "*amdgpu*" -o -path "*radeon*" -o -path "*nvidia*" || \
+				note "warning: x86 GPU firmware blobs not detected"
+			;;
+		aarch64)
+			find_any "$firmware_root" -path "*mediatek*" -o -path "*brcm*" -o -path "*qcom*" || \
+				note "warning: arm64 device firmware blobs not detected"
+			;;
+	esac
+	find_any "$firmware_root" -name "iwlwifi-*" -o -path "*ath10k*" -o -path "*ath11k*" -o -path "*brcm*" -o -path "*rtw*" -o -path "*mediatek*" || \
+		missing "Wi-Fi firmware blobs"
+	find_any "$firmware_root" -name "intel-ucode*" -o -name "amd-ucode*" -o -path "*amd-ucode*" || \
+		note "warning: CPU microcode not detected"
+fi
+
+has_binary udevadm || missing "udev userspace tools"
+has_binary NetworkManager || has_binary iwd || has_binary wpa_supplicant || missing "Wi-Fi/network manager userspace"
+has_binary bluetoothd || missing "BlueZ bluetoothd"
+has_binary pipewire || missing "PipeWire audio server"
+has_binary wireplumber || missing "WirePlumber session manager"
+
+has_unit NetworkManager.service || has_unit iwd.service || has_unit wpa_supplicant.service || missing "networking systemd unit"
+has_unit bluetooth.service || missing "Bluetooth systemd unit"
+has_user_unit pipewire.socket || has_user_unit pipewire.service || missing "PipeWire user systemd unit"
+has_user_unit wireplumber.service || missing "WirePlumber user systemd unit"
+
+find_any "$rootfs/usr/lib/dri" -name "*.so" || find_any "$rootfs/usr/lib64/dri" -name "*.so" || missing "Mesa DRI GPU userspace drivers"
+find_any "$rootfs/usr/share/vulkan/icd.d" -name "*.json" || find_any "$rootfs/etc/vulkan/icd.d" -name "*.json" || note "warning: Vulkan ICDs not detected"
+
+if [[ "$failures" -eq 0 ]]; then
+	note "baseline hardware support looks ready"
+	exit 0
+fi
+
+if [[ "$strict" == true ]]; then
+	note "$failures required hardware check(s) failed"
+	exit 1
+fi
+
+note "$failures required hardware check(s) failed; continuing because strict mode is off"
+exit 0

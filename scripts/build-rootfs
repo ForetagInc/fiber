@@ -1,0 +1,182 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+FIBER_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+source "$FIBER_ROOT/scripts/lib/fiber-image.sh"
+
+usage() {
+	cat <<'USAGE'
+Usage: scripts/build-rootfs --source PATH [options]
+
+Stage a Fiber root filesystem from an existing rootfs directory and apply the
+repo's OS overlay files. This script does not depend on NixOS.
+
+Options:
+  --target TARGET          x86_64 or aarch64. Defaults to host arch.
+  --source PATH            Existing rootfs directory to copy.
+  --compositor-bin PATH    Prebuilt fiber-compositor binary. If omitted, the
+                           script builds one with scripts/build-compositor.
+  --strict-hardware        Fail if required hardware support is missing.
+  --no-hardware-check      Skip hardware support verification.
+  --out PATH               Output rootfs directory. Defaults to dist/rootfs/TARGET.
+  -h, --help               Show this help.
+
+Example:
+  scripts/build-rootfs --target x86_64 --source /srv/fiber/rootfs
+USAGE
+}
+
+target="$(fiber_host_target)"
+source_rootfs=""
+compositor_bin=""
+out_rootfs=""
+hardware_check="warn"
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--target)
+			[[ $# -ge 2 ]] || fiber_die "--target requires a value"
+			target="$(fiber_normalize_target "$2")"
+			shift 2
+			;;
+		--source)
+			[[ $# -ge 2 ]] || fiber_die "--source requires a value"
+			source_rootfs="$2"
+			shift 2
+			;;
+		--compositor-bin)
+			[[ $# -ge 2 ]] || fiber_die "--compositor-bin requires a value"
+			compositor_bin="$2"
+			shift 2
+			;;
+		--strict-hardware)
+			hardware_check="strict"
+			shift
+			;;
+		--no-hardware-check)
+			hardware_check="skip"
+			shift
+			;;
+		--out)
+			[[ $# -ge 2 ]] || fiber_die "--out requires a value"
+			out_rootfs="$2"
+			shift 2
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*)
+			fiber_die "unknown option '$1'"
+			;;
+	esac
+done
+
+target="$(fiber_normalize_target "$target")"
+[[ -n "$source_rootfs" ]] || fiber_die "--source is required"
+[[ -d "$source_rootfs" ]] || fiber_die "rootfs source does not exist: $source_rootfs"
+
+if [[ -z "$out_rootfs" ]]; then
+	out_rootfs="$FIBER_ROOT/dist/rootfs/$target"
+fi
+
+fiber_info "staging rootfs for $target"
+fiber_copy_tree "$source_rootfs" "$out_rootfs"
+fiber_overlay_tree "$FIBER_ROOT/image/rootfs" "$out_rootfs"
+
+mkdir -p "$out_rootfs/etc/calamares" "$out_rootfs/etc/fiberos"
+fiber_overlay_tree "$FIBER_ROOT/calamares" "$out_rootfs/etc/calamares"
+
+if [[ -z "$compositor_bin" ]]; then
+	compositor_bin="$FIBER_ROOT/dist/compositor/$target/fiber-compositor"
+	"$FIBER_ROOT/scripts/build-compositor" --target "$target" --out "$compositor_bin"
+fi
+
+[[ -f "$compositor_bin" ]] || fiber_die "compositor binary does not exist: $compositor_bin"
+mkdir -p "$out_rootfs/usr/bin"
+cp "$compositor_bin" "$out_rootfs/usr/bin/fiber-compositor"
+chmod 0755 "$out_rootfs/usr/bin/fiber-compositor"
+
+if [[ -d "$out_rootfs/etc/systemd/system/graphical.target.wants" ]]; then
+	rm -f "$out_rootfs/etc/systemd/system/graphical.target.wants/fiber-compositor.service"
+	ln -s ../fiber-compositor.service "$out_rootfs/etc/systemd/system/graphical.target.wants/fiber-compositor.service"
+fi
+
+if [[ -d "$out_rootfs/etc/systemd/system" ]]; then
+	rm -f "$out_rootfs/etc/systemd/system/default.target"
+	ln -s /usr/lib/systemd/system/graphical.target "$out_rootfs/etc/systemd/system/default.target"
+fi
+
+enable_system_unit() {
+	local unit="$1"
+	local wanted_by="${2:-multi-user.target}"
+	local unit_path=""
+
+	for candidate in \
+		"$out_rootfs/usr/lib/systemd/system/$unit" \
+		"$out_rootfs/lib/systemd/system/$unit" \
+		"$out_rootfs/etc/systemd/system/$unit"
+	do
+		if [[ -f "$candidate" ]]; then
+			unit_path="$candidate"
+			break
+		fi
+	done
+
+	[[ -n "$unit_path" ]] || return 0
+	mkdir -p "$out_rootfs/etc/systemd/system/$wanted_by.wants"
+	ln -sfn "${unit_path#"$out_rootfs"}" "$out_rootfs/etc/systemd/system/$wanted_by.wants/$unit"
+}
+
+enable_user_unit() {
+	local unit="$1"
+	local wanted_by="${2:-default.target}"
+	local unit_path=""
+
+	for candidate in \
+		"$out_rootfs/usr/lib/systemd/user/$unit" \
+		"$out_rootfs/lib/systemd/user/$unit" \
+		"$out_rootfs/etc/systemd/user/$unit"
+	do
+		if [[ -f "$candidate" ]]; then
+			unit_path="$candidate"
+			break
+		fi
+	done
+
+	[[ -n "$unit_path" ]] || return 0
+	mkdir -p "$out_rootfs/etc/systemd/user/$wanted_by.wants"
+	ln -sfn "${unit_path#"$out_rootfs"}" "$out_rootfs/etc/systemd/user/$wanted_by.wants/$unit"
+}
+
+enable_system_unit systemd-udevd.service sysinit.target
+enable_system_unit NetworkManager.service multi-user.target
+enable_system_unit iwd.service multi-user.target
+enable_system_unit wpa_supplicant.service multi-user.target
+enable_system_unit bluetooth.service bluetooth.target
+enable_system_unit fiber-hardware-preflight.service multi-user.target
+enable_user_unit pipewire.socket sockets.target
+enable_user_unit pipewire-pulse.socket sockets.target
+enable_user_unit wireplumber.service default.target
+
+cat > "$out_rootfs/etc/fiberos/build-info" <<EOF
+FIBER_TARGET=$target
+FIBER_BUILD_KIND=custom-rootfs
+FIBER_COMPOSITOR=/usr/bin/fiber-compositor
+EOF
+
+case "$hardware_check" in
+	strict)
+		"$FIBER_ROOT/scripts/verify-rootfs-hardware" --rootfs "$out_rootfs" --strict
+		;;
+	warn)
+		"$FIBER_ROOT/scripts/verify-rootfs-hardware" --rootfs "$out_rootfs" || true
+		;;
+	skip)
+		fiber_info "hardware support verification skipped"
+		;;
+esac
+
+fiber_info "rootfs staged at $out_rootfs"

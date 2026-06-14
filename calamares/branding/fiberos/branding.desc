@@ -1,0 +1,20 @@
+---
+componentName: fiberos
+
+strings:
+  productName: "Fiber OS"
+  shortProductName: "Fiber"
+  version: "0.1.0"
+  shortVersion: "0.1"
+  versionedName: "Fiber OS 0.1"
+  shortVersionedName: "Fiber 0.1"
+  bootloaderEntryName: "Fiber OS"
+  productUrl: "https://fiber.local"
+  supportUrl: "https://fiber.local/support"
+  knownIssuesUrl: "https://fiber.local/issues"
+  releaseNotesUrl: "https://fiber.local/releases"
+
+style:
+  sidebarBackground: "#101820"
+  sidebarText: "#f6f7f9"
+  sidebarTextSelect: "#ffffff"

@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+FIBER_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+source "$FIBER_ROOT/scripts/lib/fiber-image.sh"
+
+usage() {
+	cat <<'USAGE'
+Usage: scripts/build-compositor [options]
+
+Build the Fiber compositor binary used by the custom rootfs pipeline.
+
+Options:
+  --target TARGET       x86_64 or aarch64. Defaults to host arch.
+  --cargo-target TRIPLE Override the Rust target triple.
+  --out PATH            Output binary path. Defaults to dist/compositor/TARGET/fiber-compositor.
+  -h, --help            Show this help.
+
+Example:
+  scripts/build-compositor --target x86_64
+USAGE
+}
+
+target="$(fiber_host_target)"
+cargo_target=""
+out_bin=""
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--target)
+			[[ $# -ge 2 ]] || fiber_die "--target requires a value"
+			target="$(fiber_normalize_target "$2")"
+			shift 2
+			;;
+		--cargo-target)
+			[[ $# -ge 2 ]] || fiber_die "--cargo-target requires a value"
+			cargo_target="$2"
+			shift 2
+			;;
+		--out)
+			[[ $# -ge 2 ]] || fiber_die "--out requires a value"
+			out_bin="$2"
+			shift 2
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*)
+			fiber_die "unknown option '$1'"
+			;;
+	esac
+done
+
+target="$(fiber_normalize_target "$target")"
+
+if [[ -z "$cargo_target" ]]; then
+	cargo_target="$(fiber_target_rust_triple "$target")"
+fi
+
+if [[ -z "$out_bin" ]]; then
+	out_bin="$FIBER_ROOT/dist/compositor/$target/fiber-compositor"
+fi
+
+fiber_need_tool cargo
+mkdir -p "$(dirname "$out_bin")"
+
+fiber_info "building fiber-compositor for $cargo_target"
+cargo build --release --package fiber_compositor --bin fiber-compositor --target "$cargo_target"
+cp "$FIBER_ROOT/target/$cargo_target/release/fiber-compositor" "$out_bin"
+fiber_info "compositor binary written to $out_bin"

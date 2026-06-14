@@ -1,0 +1,49 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+log() {
+	printf 'fiber-hardware-preflight: %s\n' "$*" >&2
+}
+
+check_path() {
+	local path="$1"
+	local label="$2"
+
+	if [[ -e "$path" ]]; then
+		log "$label ready: $path"
+	else
+		log "warning: $label missing: $path"
+	fi
+}
+
+check_binary() {
+	local name="$1"
+	if command -v "$name" >/dev/null 2>&1; then
+		log "$name ready"
+	else
+		log "warning: $name not found"
+	fi
+}
+
+check_path /lib/modules "kernel modules"
+check_path /lib/firmware "firmware"
+check_binary udevadm
+check_binary NetworkManager || true
+check_binary iwd || true
+check_binary wpa_supplicant || true
+check_binary bluetoothd || true
+check_binary pipewire || true
+check_binary wireplumber || true
+
+if [[ -d /sys/class/drm ]]; then
+	log "DRM devices visible"
+else
+	log "warning: no DRM devices visible yet"
+fi
+
+if [[ -d /sys/class/sound ]]; then
+	log "sound devices visible"
+else
+	log "warning: no sound devices visible yet"
+fi

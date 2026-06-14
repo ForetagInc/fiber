@@ -1,0 +1,3 @@
+Fiber Compositor discovers OpenXR runtimes through XR_RUNTIME_JSON or the
+standard active_runtime.json locations. Certified images should install a
+runtime manifest here or ship Monado's manifest under /usr/share/openxr/1.

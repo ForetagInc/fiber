@@ -1,0 +1,7 @@
+# Mark common removable and input devices as systemd-visible for shell services.
+
+SUBSYSTEM=="drm", TAG+="systemd"
+SUBSYSTEM=="sound", TAG+="systemd"
+SUBSYSTEM=="net", TAG+="systemd"
+SUBSYSTEM=="bluetooth", TAG+="systemd"
+SUBSYSTEM=="input", TAG+="systemd"

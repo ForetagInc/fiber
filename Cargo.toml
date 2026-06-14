@@ -1,6 +1,6 @@
 [workspace]
 resolver = '3'
-members = ['services/*']
+members = ['crates/*', 'services/*']
 
 [workspace.dependencies]
 serde = { version = '1' }

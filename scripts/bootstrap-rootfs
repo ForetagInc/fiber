@@ -1,0 +1,209 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+FIBER_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+source "$FIBER_ROOT/scripts/lib/fiber-image.sh"
+
+usage() {
+	cat <<'USAGE'
+Usage: scripts/bootstrap-rootfs [options]
+
+Bootstrap a Linux rootfs, kernel, and initrd suitable for the Fiber ISO
+pipeline. This is primarily intended for CI and Linux build hosts.
+
+Options:
+  --target TARGET         x86_64/amd64 or aarch64/arm64. Defaults to host arch.
+  --distribution NAME     Debian suite to bootstrap. Defaults to bookworm.
+  --mirror URL            Debian mirror. Defaults to https://deb.debian.org/debian.
+  --out-rootfs PATH       Rootfs output directory. Defaults to dist/bootstrap/TARGET/rootfs.
+  --out-kernel-dir PATH   Kernel staging directory. Defaults to dist/bootstrap/TARGET/kernel.
+  --extra-package NAME    Extra package to install into the rootfs. May be repeated.
+  -h, --help              Show this help.
+
+Example:
+  scripts/bootstrap-rootfs --target aarch64
+USAGE
+}
+
+target="$(fiber_host_target)"
+distribution="bookworm"
+mirror="https://deb.debian.org/debian"
+out_rootfs=""
+out_kernel_dir=""
+extra_packages=()
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--target)
+			[[ $# -ge 2 ]] || fiber_die "--target requires a value"
+			target="$(fiber_normalize_target "$2")"
+			shift 2
+			;;
+		--distribution)
+			[[ $# -ge 2 ]] || fiber_die "--distribution requires a value"
+			distribution="$2"
+			shift 2
+			;;
+		--mirror)
+			[[ $# -ge 2 ]] || fiber_die "--mirror requires a value"
+			mirror="$2"
+			shift 2
+			;;
+		--out-rootfs)
+			[[ $# -ge 2 ]] || fiber_die "--out-rootfs requires a value"
+			out_rootfs="$2"
+			shift 2
+			;;
+		--out-kernel-dir)
+			[[ $# -ge 2 ]] || fiber_die "--out-kernel-dir requires a value"
+			out_kernel_dir="$2"
+			shift 2
+			;;
+		--extra-package)
+			[[ $# -ge 2 ]] || fiber_die "--extra-package requires a value"
+			extra_packages+=("$2")
+			shift 2
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*)
+			fiber_die "unknown option '$1'"
+			;;
+	esac
+done
+
+fiber_require_linux_for_iso
+fiber_need_tool sudo
+fiber_need_tool debootstrap
+fiber_need_tool chroot
+fiber_need_tool mount
+fiber_need_tool umount
+
+target="$(fiber_normalize_target "$target")"
+debian_arch="$(fiber_target_debian_arch "$target")"
+kernel_pkg="$(fiber_target_kernel_meta_package "$target")"
+out_rootfs="${out_rootfs:-$FIBER_ROOT/dist/bootstrap/$target/rootfs}"
+out_kernel_dir="${out_kernel_dir:-$FIBER_ROOT/dist/bootstrap/$target/kernel}"
+
+packages=(
+	systemd-sysv
+	sudo
+	dbus
+	udev
+	initramfs-tools
+	live-boot
+	libgl1-mesa-dri
+	mesa-vulkan-drivers
+	network-manager
+	bluez
+	pipewire
+	wireplumber
+	pipewire-pulse
+	iwd
+	wpasupplicant
+	linux-firmware
+	firmware-linux
+	firmware-linux-free
+	firmware-iwlwifi
+	firmware-atheros
+	firmware-brcm80211
+	firmware-realtek
+	bluez-firmware
+	ca-certificates
+	libopenxr-loader1
+	libwayland-server0
+	"$kernel_pkg"
+)
+
+if [[ "$target" == "x86_64" ]]; then
+	packages+=(amd64-microcode intel-microcode)
+fi
+
+packages+=("${extra_packages[@]}")
+
+rm -rf "$out_rootfs" "$out_kernel_dir"
+mkdir -p "$out_kernel_dir"
+
+fiber_info "bootstrapping Debian $distribution rootfs for $target ($debian_arch)"
+sudo debootstrap \
+	--arch="$debian_arch" \
+	--variant=minbase \
+	--components=main,contrib,non-free,non-free-firmware \
+	"$distribution" \
+	"$out_rootfs" \
+	"$mirror"
+
+cat <<EOF | sudo tee "$out_rootfs/etc/apt/sources.list" >/dev/null
+deb $mirror $distribution main contrib non-free non-free-firmware
+deb $mirror ${distribution}-updates main contrib non-free non-free-firmware
+deb https://security.debian.org/debian-security ${distribution}-security main contrib non-free non-free-firmware
+EOF
+
+echo "fiber" | sudo tee "$out_rootfs/etc/hostname" >/dev/null
+echo "127.0.0.1 localhost" | sudo tee "$out_rootfs/etc/hosts" >/dev/null
+echo "127.0.1.1 fiber" | sudo tee -a "$out_rootfs/etc/hosts" >/dev/null
+echo "en_GB.UTF-8 UTF-8" | sudo tee "$out_rootfs/etc/locale.gen" >/dev/null
+echo "LANG=en_GB.UTF-8" | sudo tee "$out_rootfs/etc/default/locale" >/dev/null
+
+cat <<'EOF' | sudo tee "$out_rootfs/usr/sbin/policy-rc.d" >/dev/null
+#!/bin/sh
+exit 101
+EOF
+sudo chmod 0755 "$out_rootfs/usr/sbin/policy-rc.d"
+
+mounts=(
+	"/dev:$out_rootfs/dev"
+	"/dev/pts:$out_rootfs/dev/pts"
+	"/proc:$out_rootfs/proc"
+	"/sys:$out_rootfs/sys"
+)
+
+cleanup() {
+	local mount_spec source target_mount
+	for (( idx=${#mounts[@]}-1; idx>=0; idx-- )); do
+		mount_spec="${mounts[idx]}"
+		source="${mount_spec%%:*}"
+		target_mount="${mount_spec#*:}"
+		if mountpoint -q "$target_mount"; then
+			sudo umount "$target_mount"
+		fi
+	done
+}
+trap cleanup EXIT
+
+for mount_spec in "${mounts[@]}"; do
+	source="${mount_spec%%:*}"
+	target_mount="${mount_spec#*:}"
+	sudo mkdir -p "$target_mount"
+	sudo mount --bind "$source" "$target_mount"
+done
+
+package_list="$(printf '%s ' "${packages[@]}")"
+
+sudo chroot "$out_rootfs" /usr/bin/env DEBIAN_FRONTEND=noninteractive bash -lc "
+set -euo pipefail
+apt-get update
+apt-get install -y $package_list
+locale-gen en_GB.UTF-8
+update-initramfs -c -k all
+systemctl enable NetworkManager.service
+systemctl enable bluetooth.service
+rm -f /etc/machine-id
+touch /etc/machine-id
+"
+
+latest_kernel="$(find "$out_rootfs/boot" -maxdepth 1 -type f -name 'vmlinuz-*' | sort | tail -n 1)"
+latest_initrd="$(find "$out_rootfs/boot" -maxdepth 1 -type f -name 'initrd.img-*' | sort | tail -n 1)"
+
+[[ -n "$latest_kernel" ]] || fiber_die "bootstrapped rootfs did not produce a kernel image"
+[[ -n "$latest_initrd" ]] || fiber_die "bootstrapped rootfs did not produce an initrd image"
+
+cp "$latest_kernel" "$out_kernel_dir/vmlinuz"
+cp "$latest_initrd" "$out_kernel_dir/initrd.img"
+
+fiber_info "bootstrapped rootfs at $out_rootfs"
+fiber_info "staged kernel artifacts at $out_kernel_dir"

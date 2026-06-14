@@ -1,0 +1,37 @@
+Required on the Linux image build host:
+
+- bash
+- coreutils
+- debootstrap
+- dosfstools
+- findutils
+- rsync or cp
+- squashfs-tools
+- grub2 EFI tools with grub-mkstandalone
+- mtools
+- xorriso
+- Rust and Cargo for building /usr/bin/fiber-compositor
+- a prepared Fiber rootfs directory
+- a Linux kernel image
+- an initramfs image with live SquashFS boot support
+
+Required for the CI bootstrap flow:
+
+- sudo/root access for chroot mounts
+- Debian packages for:
+  - systemd, udev, initramfs-tools, live-boot
+  - NetworkManager, BlueZ, PipeWire, WirePlumber
+  - Mesa DRI/Vulkan userspace
+  - linux-firmware and per-device firmware packages
+  - a matching Linux kernel package for the target arch
+
+Required inside the Fiber rootfs for hardware-ready images:
+
+- Linux kernel modules matching the staged kernel
+- linux-firmware, including Wi-Fi, Bluetooth, GPU, and CPU microcode blobs
+- udev/systemd
+- Mesa DRI drivers and Vulkan ICDs
+- NetworkManager or iwd/wpa_supplicant
+- BlueZ
+- PipeWire
+- WirePlumber

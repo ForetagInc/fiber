@@ -1,0 +1,212 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+FIBER_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+source "$FIBER_ROOT/scripts/lib/fiber-image.sh"
+
+usage() {
+	cat <<'USAGE'
+Usage: scripts/build-release [options]
+
+Build one or more Fiber release ISOs through the same staged pipeline used by
+CI. By default this builds both canonical architectures.
+
+Options:
+  --target TARGET         Add one target. May be repeated.
+  --targets LIST          Comma-separated target list. Defaults to x86_64,aarch64.
+  --bootstrap-rootfs      Generate Linux rootfs/kernel/initrd inputs automatically.
+  --rootfs-source PATH    Rootfs source path. Use {target} when building multiple targets.
+  --kernel PATH           Kernel path. Use {target} when building multiple targets.
+  --initrd PATH           Initrd path. Use {target} when building multiple targets.
+  --compositor-bin PATH   Prebuilt compositor path. Use {target} when building multiple targets.
+  --strict-hardware       Fail if required hardware support is missing.
+  --no-hardware-check     Skip hardware support verification.
+  --out-dir PATH          Output directory. Defaults to dist/release.
+  --with-aliases          Emit amd64 and arm64 ISO aliases alongside canonical names.
+  -h, --help              Show this help.
+
+Examples:
+  scripts/build-release --bootstrap-rootfs
+  scripts/build-release --target x86_64 \
+    --rootfs-source /srv/fiber/{target}/rootfs \
+    --kernel /srv/fiber/{target}/vmlinuz \
+    --initrd /srv/fiber/{target}/initrd.img
+USAGE
+}
+
+targets=()
+bootstrap_rootfs=false
+rootfs_source=""
+kernel=""
+initrd=""
+compositor_bin=""
+hardware_check="warn"
+out_dir="$FIBER_ROOT/dist/release"
+with_aliases=false
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--target)
+			[[ $# -ge 2 ]] || fiber_die "--target requires a value"
+			targets+=("$(fiber_normalize_target "$2")")
+			shift 2
+			;;
+		--targets)
+			[[ $# -ge 2 ]] || fiber_die "--targets requires a value"
+			IFS=',' read -r -a raw_targets <<<"$2"
+			for raw_target in "${raw_targets[@]}"; do
+				[[ -n "$raw_target" ]] || continue
+				targets+=("$(fiber_normalize_target "$raw_target")")
+			done
+			shift 2
+			;;
+		--bootstrap-rootfs)
+			bootstrap_rootfs=true
+			shift
+			;;
+		--rootfs-source)
+			[[ $# -ge 2 ]] || fiber_die "--rootfs-source requires a value"
+			rootfs_source="$2"
+			shift 2
+			;;
+		--kernel)
+			[[ $# -ge 2 ]] || fiber_die "--kernel requires a value"
+			kernel="$2"
+			shift 2
+			;;
+		--initrd)
+			[[ $# -ge 2 ]] || fiber_die "--initrd requires a value"
+			initrd="$2"
+			shift 2
+			;;
+		--compositor-bin)
+			[[ $# -ge 2 ]] || fiber_die "--compositor-bin requires a value"
+			compositor_bin="$2"
+			shift 2
+			;;
+		--strict-hardware)
+			hardware_check="strict"
+			shift
+			;;
+		--no-hardware-check)
+			hardware_check="skip"
+			shift
+			;;
+		--out-dir)
+			[[ $# -ge 2 ]] || fiber_die "--out-dir requires a value"
+			out_dir="$2"
+			shift 2
+			;;
+		--with-aliases)
+			with_aliases=true
+			shift
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*)
+			fiber_die "unknown option '$1'"
+			;;
+	esac
+done
+
+if [[ "${#targets[@]}" -eq 0 ]]; then
+	targets=(x86_64 aarch64)
+fi
+
+resolve_target_path() {
+	local pattern="$1"
+	local target="$2"
+
+	if [[ -z "$pattern" ]]; then
+		return 0
+	fi
+
+	if [[ "$pattern" == *"{target}"* ]]; then
+		printf '%s\n' "${pattern//\{target\}/$target}"
+		return 0
+	fi
+
+	if [[ "${#targets[@]}" -gt 1 ]]; then
+		fiber_die "path '$pattern' must include {target} when building multiple targets"
+	fi
+
+	printf '%s\n' "$pattern"
+}
+
+mkdir -p "$out_dir"
+
+for target in "${targets[@]}"; do
+	target="$(fiber_normalize_target "$target")"
+	work_dir="$out_dir/work/$target"
+	rootfs_out="$work_dir/rootfs"
+	kernel_out="$work_dir/kernel"
+	image_work_dir="$work_dir/iso"
+	iso_out="$out_dir/fiberos-$target.iso"
+
+	target_rootfs_source="$(resolve_target_path "$rootfs_source" "$target")"
+	target_kernel="$(resolve_target_path "$kernel" "$target")"
+	target_initrd="$(resolve_target_path "$initrd" "$target")"
+	target_compositor_bin="$(resolve_target_path "$compositor_bin" "$target")"
+
+	if [[ "$bootstrap_rootfs" == true ]]; then
+		bootstrap_dir="$out_dir/bootstrap/$target"
+		"$FIBER_ROOT/scripts/bootstrap-rootfs" \
+			--target "$target" \
+			--out-rootfs "$bootstrap_dir/rootfs" \
+			--out-kernel-dir "$bootstrap_dir/kernel"
+		target_rootfs_source="$bootstrap_dir/rootfs"
+		target_kernel="$bootstrap_dir/kernel/vmlinuz"
+		target_initrd="$bootstrap_dir/kernel/initrd.img"
+	fi
+
+	[[ -n "$target_rootfs_source" ]] || fiber_die "missing rootfs source for $target"
+	[[ -n "$target_kernel" ]] || fiber_die "missing kernel for $target"
+	[[ -n "$target_initrd" ]] || fiber_die "missing initrd for $target"
+
+	commands=(
+		--target "$target"
+		--rootfs-source "$target_rootfs_source"
+		--kernel "$target_kernel"
+		--initrd "$target_initrd"
+		--rootfs-out "$rootfs_out"
+		--kernel-out "$kernel_out"
+		--image-work-dir "$image_work_dir"
+		--out "$iso_out"
+	)
+
+	if [[ -n "$target_compositor_bin" ]]; then
+		commands+=(--compositor-bin "$target_compositor_bin")
+	fi
+
+	case "$hardware_check" in
+		strict)
+			commands+=(--strict-hardware)
+			;;
+		skip)
+			commands+=(--no-hardware-check)
+			;;
+	esac
+
+	fiber_info "building release ISO for $target"
+	"$FIBER_ROOT/scripts/build-os" "${commands[@]}"
+
+	if [[ "$with_aliases" == true ]]; then
+		while IFS= read -r alias; do
+			[[ -n "$alias" ]] || continue
+			cp "$iso_out" "$out_dir/fiberos-$alias.iso"
+		done < <(fiber_target_aliases "$target")
+	fi
+done
+
+checksum_cmd="$(fiber_sha256_cmd)"
+(
+	cd "$out_dir"
+	rm -f SHA256SUMS
+	eval "$checksum_cmd" fiberos-*.iso > SHA256SUMS
+)
+
+fiber_info "release artifacts written to $out_dir"

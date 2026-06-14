@@ -1,0 +1,21 @@
+[Unit]
+Description=Fiber Compositor
+Documentation=man:fiber-compositor(1)
+After=systemd-user-sessions.service dbus.service systemd-logind.service
+Wants=dbus.service systemd-logind.service
+
+[Service]
+Type=simple
+Environment=FIBER_SHELL=spatial
+Environment=FIBER_OPENXR=auto
+Environment=XDG_SESSION_TYPE=wayland
+Environment=XDG_CURRENT_DESKTOP=Fiber
+Environment=XDG_RUNTIME_DIR=/run/fiberos
+Environment=WAYLAND_DISPLAY=wayland-0
+RuntimeDirectory=fiberos
+ExecStart=/usr/bin/fiber-compositor --shell spatial --openxr auto
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=graphical.target

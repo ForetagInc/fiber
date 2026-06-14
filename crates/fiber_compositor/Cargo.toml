@@ -1,0 +1,13 @@
+[package]
+name = "fiber_compositor"
+publish = false
+edition = "2024"
+version = "0.1.0"
+
+[[bin]]
+name = "fiber-compositor"
+path = "src/main.rs"
+
+[dependencies]
+openxr = { version = "0.21.1", default-features = false, features = ["loaded"] }
+wayland-server = "0.31.13"

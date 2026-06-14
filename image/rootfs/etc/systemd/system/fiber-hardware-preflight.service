@@ -1,0 +1,12 @@
+[Unit]
+Description=Fiber Hardware Preflight
+DefaultDependencies=no
+After=systemd-udev-trigger.service
+Before=NetworkManager.service bluetooth.service fiber-compositor.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/lib/fiberos/hardware-preflight
+
+[Install]
+WantedBy=multi-user.target

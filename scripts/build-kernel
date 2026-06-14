@@ -1,0 +1,79 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+FIBER_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+source "$FIBER_ROOT/scripts/lib/fiber-image.sh"
+
+usage() {
+	cat <<'USAGE'
+Usage: scripts/build-kernel --kernel PATH --initrd PATH [options]
+
+Stage kernel artifacts for a Fiber ISO. Kernel compilation is intentionally
+kept separate from ISO assembly so Fiber can use any kernel build pipeline.
+
+Options:
+  --target TARGET   x86_64 or aarch64. Defaults to host arch.
+  --kernel PATH     Path to vmlinuz/Image.
+  --initrd PATH     Path to initramfs image.
+  --out PATH        Output directory. Defaults to dist/kernel/TARGET.
+  -h, --help        Show this help.
+
+Example:
+  scripts/build-kernel --target x86_64 --kernel /boot/vmlinuz-linux --initrd /boot/initramfs-linux.img
+USAGE
+}
+
+target="$(fiber_host_target)"
+kernel=""
+initrd=""
+out_dir=""
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--target)
+			[[ $# -ge 2 ]] || fiber_die "--target requires a value"
+			target="$(fiber_normalize_target "$2")"
+			shift 2
+			;;
+		--kernel)
+			[[ $# -ge 2 ]] || fiber_die "--kernel requires a value"
+			kernel="$2"
+			shift 2
+			;;
+		--initrd)
+			[[ $# -ge 2 ]] || fiber_die "--initrd requires a value"
+			initrd="$2"
+			shift 2
+			;;
+		--out)
+			[[ $# -ge 2 ]] || fiber_die "--out requires a value"
+			out_dir="$2"
+			shift 2
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*)
+			fiber_die "unknown option '$1'"
+			;;
+	esac
+done
+
+target="$(fiber_normalize_target "$target")"
+[[ -n "$kernel" ]] || fiber_die "--kernel is required"
+[[ -n "$initrd" ]] || fiber_die "--initrd is required"
+[[ -f "$kernel" ]] || fiber_die "kernel does not exist: $kernel"
+[[ -f "$initrd" ]] || fiber_die "initrd does not exist: $initrd"
+
+if [[ -z "$out_dir" ]]; then
+	out_dir="$FIBER_ROOT/dist/kernel/$target"
+fi
+
+mkdir -p "$out_dir"
+cp "$kernel" "$out_dir/vmlinuz"
+cp "$initrd" "$out_dir/initrd.img"
+
+fiber_info "kernel artifacts staged at $out_dir"

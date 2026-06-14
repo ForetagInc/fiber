@@ -1,0 +1,7 @@
+NAME="Fiber OS"
+ID=fiber
+PRETTY_NAME="Fiber OS"
+VERSION_ID="0.1.0"
+HOME_URL="https://fiber.local"
+SUPPORT_URL="https://fiber.local/support"
+BUG_REPORT_URL="https://fiber.local/issues"

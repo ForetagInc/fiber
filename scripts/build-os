@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+FIBER_ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
+source "$FIBER_ROOT/scripts/lib/fiber-image.sh"
+
+usage() {
+	cat <<'USAGE'
+Usage: scripts/build-os --rootfs-source PATH --kernel PATH --initrd PATH [options]
+
+Run the full custom Fiber OS image pipeline:
+  1. Stage a root filesystem.
+  2. Stage kernel artifacts.
+  3. Assemble a bootable ISO.
+
+Options:
+  --target TARGET        x86_64/amd64 or aarch64/arm64. Defaults to host arch.
+  --rootfs-source PATH   Existing rootfs directory.
+  --kernel PATH          Path to vmlinuz/Image.
+  --initrd PATH          Path to initramfs image.
+  --compositor-bin PATH  Prebuilt fiber-compositor binary.
+  --strict-hardware      Fail if required hardware support is missing.
+  --no-hardware-check    Skip hardware support verification.
+  --rootfs-out PATH      Rootfs staging directory. Defaults to dist/rootfs/TARGET.
+  --kernel-out PATH      Kernel staging directory. Defaults to dist/kernel/TARGET.
+  --image-work-dir PATH  Scratch directory for ISO assembly.
+  --out PATH             ISO path. Defaults to dist/fiberos-TARGET.iso.
+  -h, --help             Show this help.
+
+Example:
+  scripts/build-os --target x86_64 --rootfs-source /srv/fiber/rootfs --kernel /boot/vmlinuz-linux --initrd /boot/initramfs-linux.img
+USAGE
+}
+
+target="$(fiber_host_target)"
+rootfs_source=""
+kernel=""
+initrd=""
+compositor_bin=""
+out_iso=""
+hardware_check="warn"
+rootfs_out=""
+kernel_out=""
+image_work_dir=""
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+		--target)
+			[[ $# -ge 2 ]] || fiber_die "--target requires a value"
+			target="$(fiber_normalize_target "$2")"
+			shift 2
+			;;
+		--rootfs-source)
+			[[ $# -ge 2 ]] || fiber_die "--rootfs-source requires a value"
+			rootfs_source="$2"
+			shift 2
+			;;
+		--kernel)
+			[[ $# -ge 2 ]] || fiber_die "--kernel requires a value"
+			kernel="$2"
+			shift 2
+			;;
+		--initrd)
+			[[ $# -ge 2 ]] || fiber_die "--initrd requires a value"
+			initrd="$2"
+			shift 2
+			;;
+		--compositor-bin)
+			[[ $# -ge 2 ]] || fiber_die "--compositor-bin requires a value"
+			compositor_bin="$2"
+			shift 2
+			;;
+		--strict-hardware)
+			hardware_check="strict"
+			shift
+			;;
+		--no-hardware-check)
+			hardware_check="skip"
+			shift
+			;;
+		--out)
+			[[ $# -ge 2 ]] || fiber_die "--out requires a value"
+			out_iso="$2"
+			shift 2
+			;;
+		--rootfs-out)
+			[[ $# -ge 2 ]] || fiber_die "--rootfs-out requires a value"
+			rootfs_out="$2"
+			shift 2
+			;;
+		--kernel-out)
+			[[ $# -ge 2 ]] || fiber_die "--kernel-out requires a value"
+			kernel_out="$2"
+			shift 2
+			;;
+		--image-work-dir)
+			[[ $# -ge 2 ]] || fiber_die "--image-work-dir requires a value"
+			image_work_dir="$2"
+			shift 2
+			;;
+		-h | --help)
+			usage
+			exit 0
+			;;
+		*)
+			fiber_die "unknown option '$1'"
+			;;
+	esac
+done
+
+target="$(fiber_normalize_target "$target")"
+[[ -n "$rootfs_source" ]] || fiber_die "--rootfs-source is required"
+[[ -n "$kernel" ]] || fiber_die "--kernel is required"
+[[ -n "$initrd" ]] || fiber_die "--initrd is required"
+
+rootfs_out="${rootfs_out:-$FIBER_ROOT/dist/rootfs/$target}"
+kernel_out="${kernel_out:-$FIBER_ROOT/dist/kernel/$target}"
+image_work_dir="${image_work_dir:-$FIBER_ROOT/dist/iso-work/$target}"
+out_iso="${out_iso:-$FIBER_ROOT/dist/fiberos-$target.iso}"
+
+rootfs_args=(--target "$target" --source "$rootfs_source" --out "$rootfs_out")
+if [[ -n "$compositor_bin" ]]; then
+	rootfs_args+=(--compositor-bin "$compositor_bin")
+fi
+case "$hardware_check" in
+	strict)
+		rootfs_args+=(--strict-hardware)
+		;;
+	skip)
+		rootfs_args+=(--no-hardware-check)
+		;;
+esac
+
+"$FIBER_ROOT/scripts/build-rootfs" "${rootfs_args[@]}"
+"$FIBER_ROOT/scripts/build-kernel" --target "$target" --kernel "$kernel" --initrd "$initrd" --out "$kernel_out"
+"$FIBER_ROOT/scripts/build-image" --target "$target" --rootfs "$rootfs_out" --kernel "$kernel_out/vmlinuz" --initrd "$kernel_out/initrd.img" --work-dir "$image_work_dir" --out "$out_iso"
