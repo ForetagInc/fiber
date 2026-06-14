@@ -25,6 +25,7 @@ cat > "$target_root/etc/fiberos/install.conf" <<EOF
 FIBER_INSTALLER=calamares
 FIBER_INSTALL_MODE=custom-image
 FIBER_PROFILE=$selected_profile
+FIBER_DISK_ENCRYPTION=luks2
 EOF
 
 cat > "$target_root/etc/fiberos/README" <<'EOF'

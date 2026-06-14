@@ -95,6 +95,8 @@ packages=(
 	sudo
 	dbus
 	udev
+	cryptsetup
+	cryptsetup-initramfs
 	initramfs-tools
 	live-boot
 	libgl1-mesa-dri

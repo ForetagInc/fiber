@@ -71,6 +71,10 @@ installed but disabled by default.
 Until Fiber ships a profile selection UI, the Calamares integration reads the
 profile from `FIBER_PROFILE` and defaults to `User`.
 
+Disk encryption is mandatory in the installer. Fiber configures Calamares to
+use automated LUKS2 partitioning on GPT and refuses to continue installation if
+the target root filesystem is not mounted from a `dm-crypt` device.
+
 Build both release ISOs on a Linux build host:
 
 ```bash
