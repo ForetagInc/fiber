@@ -61,6 +61,16 @@ Hardware support is verified during rootfs staging with architecture-aware
 checks. By default missing pieces are reported as warnings; production builds
 should use `--strict-hardware`.
 
+Wall-clock synchronization is owned by `systemd-timesyncd` in the OS image.
+Fiber configures `time.cloudflare.com` as the NTP source for system clock sync.
+
+Tor support is built into the OS image. The installer persists the selected
+Fiber profile, and `Hacker` mode enables `tor.service` automatically on the
+installed system so it joins the Tor network on boot. Other profiles keep Tor
+installed but disabled by default.
+Until Fiber ships a profile selection UI, the Calamares integration reads the
+profile from `FIBER_PROFILE` and defaults to `User`.
+
 Build both release ISOs on a Linux build host:
 
 ```bash

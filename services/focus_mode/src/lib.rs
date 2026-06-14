@@ -2,20 +2,20 @@ use contacts::Contact;
 
 #[derive(Debug)]
 pub struct FocusManager {
-	pub current_mode: Option<FocusMode>,
+	pub active_mode: Option<FocusMode>,
 	pub modes: Vec<FocusMode>,
 }
 
 impl FocusManager {
 	pub fn new(modes: Vec<FocusMode>) -> Self {
 		Self {
-			current_mode: None,
+			active_mode: None,
 			modes,
 		}
 	}
 
 	pub fn set_mode(&mut self, mode: FocusMode) {
-		self.current_mode = Some(mode);
+		self.active_mode = Some(mode);
 	}
 
 	pub fn add_mode(&mut self, mode: FocusMode) {

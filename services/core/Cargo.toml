@@ -1,0 +1,9 @@
+[package]
+name = 'fiber_core'
+publish = false
+edition = '2024'
+version = '0.1.0'
+
+[dependencies]
+contacts = { path = '../contacts' }
+focus_mode = { path = '../focus_mode' }

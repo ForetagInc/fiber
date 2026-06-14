@@ -152,6 +152,7 @@ enable_user_unit() {
 }
 
 enable_system_unit systemd-udevd.service sysinit.target
+enable_system_unit systemd-timesyncd.service sysinit.target
 enable_system_unit NetworkManager.service multi-user.target
 enable_system_unit iwd.service multi-user.target
 enable_system_unit wpa_supplicant.service multi-user.target

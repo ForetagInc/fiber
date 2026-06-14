@@ -91,6 +91,7 @@ out_kernel_dir="${out_kernel_dir:-$FIBER_ROOT/dist/bootstrap/$target/kernel}"
 
 packages=(
 	systemd-sysv
+	systemd-timesyncd
 	sudo
 	dbus
 	udev
@@ -103,6 +104,7 @@ packages=(
 	pipewire
 	wireplumber
 	pipewire-pulse
+	tor
 	iwd
 	wpasupplicant
 	linux-firmware
@@ -191,6 +193,7 @@ apt-get install -y $package_list
 locale-gen en_GB.UTF-8
 update-initramfs -c -k all
 systemctl enable NetworkManager.service
+systemctl enable systemd-timesyncd.service
 systemctl enable bluetooth.service
 rm -f /etc/machine-id
 touch /etc/machine-id
